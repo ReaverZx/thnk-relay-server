@@ -10,23 +10,45 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 
+// Map client → roomId
 const clientRooms = new Map<WebSocket, string>();
 
 wss.on("connection", (ws: WebSocket) => {
   console.log("New client connected");
 
+  // Wait for the first message, which should be the join room packet
   ws.once("message", (message: Buffer, isBinary) => {
     if (!isBinary) {
-      console.warn("First message was not binary, ignoring");
+      console.warn("First message was not binary, ignoring client");
+      ws.close();
       return;
     }
 
-    // Skip the first byte (message type), read the rest as UTF-8
-    const roomId = message.subarray(1).toString("utf8").replace(/\0/g, "");
+    // Parse THNK join room packet format:
+    // byte 0 = message type (e.g. 0x00 or 0x01)
+    // byte 1 = length of room ID string
+    // bytes 2..2+length = UTF8 room ID
+    if (message.length < 2) {
+      console.warn("Join packet too short");
+      ws.close();
+      return;
+    }
+
+    const type = message.readUInt8(0);
+    const roomIdLength = message.readUInt8(1);
+
+    if (message.length < 2 + roomIdLength) {
+      console.warn("Join packet room ID length mismatch");
+      ws.close();
+      return;
+    }
+
+    const roomId = message.subarray(2, 2 + roomIdLength).toString("utf8");
+
     clientRooms.set(ws, roomId);
     console.log(`Client joined room: ${roomId}`);
 
-    // Now forward all future messages only to same-room clients
+    // Forward all future messages to clients in the same room
     ws.on("message", (data, isBin) => {
       const room = clientRooms.get(ws);
       if (!room) return;
@@ -43,12 +65,12 @@ wss.on("connection", (ws: WebSocket) => {
     });
   });
 
-  ws.on("close", () => {
+  ws.once("close", () => {
     clientRooms.delete(ws);
     console.log("Client disconnected");
   });
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`Relay server started on port ${PORT}`);
+  console.log(`THNK Relay server started on port ${PORT}`);
 });
