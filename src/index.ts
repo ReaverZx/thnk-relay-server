@@ -3,75 +3,90 @@ import WebSocket, { WebSocketServer } from "ws";
 const port = process.env.PORT ? parseInt(process.env.PORT) : 6969;
 const wss = new WebSocketServer({ port });
 
-console.log(`Relay server started on port ${port}`);
+console.log(`THNK Relay server running on port ${port}`);
 
-// Map roomID -> Set of clients
+// Keep track of clients by roomID
 const rooms = new Map<string, Set<WebSocket>>();
-// Map client -> roomID
-const clientRooms = new Map<WebSocket, string>();
 
-// Helper to send typed messages:
-// messageType: 0=ClientMessage, 1=Connection, 2=Disconnection
-function sendMessage(ws: WebSocket, userID: number, data: Uint8Array, messageType: number) {
-  // Create new buffer with data + userID + messageType bytes
-  const buffer = new Uint8Array(data.length + 2);
-  buffer.set(data, 0);
-  buffer[data.length] = userID;
-  buffer[data.length + 1] = messageType;
-  ws.send(buffer);
+function sendConnectionMsg(ws: WebSocket, userId: number) {
+  // Message type 1 (Connection), user ID as byte
+  const msg = new Uint8Array([userId, 1]);
+  ws.send(msg);
 }
 
-wss.on("connection", (ws) => {
+function sendDisconnectionMsg(ws: WebSocket, userId: number) {
+  // Message type 2 (Disconnection), user ID as byte
+  const msg = new Uint8Array([userId, 2]);
+  ws.send(msg);
+}
+
+wss.on("connection", (ws: WebSocket) => {
   console.log("New client connected");
 
-  // Wait for client to send join room message
-  ws.once("message", (message) => {
-    const data = new Uint8Array(message as ArrayBuffer);
+  // This will hold the roomID the client joined
+  let clientRoomID: string | null = null;
 
-    // The client sends the room ID as a string at the start, but it's binary, so convert bytes to string
-    const roomID = new TextDecoder().decode(data);
-    console.log(`Client joined room: ${roomID}`);
+  // Assign a unique user ID per connection (simple increment)
+  const userId = Math.floor(Math.random() * 254) + 1;
 
-    // Store client in room map
-    if (!rooms.has(roomID)) {
-      rooms.set(roomID, new Set());
+  ws.on("message", (message) => {
+    if (!(message instanceof Buffer)) {
+      console.error("Expected Buffer message");
+      return;
     }
-    rooms.get(roomID)?.add(ws);
-    clientRooms.set(ws, roomID);
+    
+    // First message from client should be join info: a text URL path like "/<gameID>/<roomID>/join"
+    if (!clientRoomID) {
+      // Example: message might be a string URL
+      const msgStr = message.toString();
+      // Extract roomID - customize as needed to parse your client URL pattern
+      const parts = msgStr.split("/");
+      const roomID = parts[2] || "default";
+      clientRoomID = roomID;
 
-    // Send connection message to client (userID = 0 for server)
-    sendMessage(ws, 0, new Uint8Array(), 1);
+      // Add client to room
+      if (!rooms.has(clientRoomID)) {
+        rooms.set(clientRoomID, new Set());
+      }
+      rooms.get(clientRoomID)!.add(ws);
 
-    // Setup normal message forwarding for this client
-    ws.on("message", (msg) => {
-      const msgData = new Uint8Array(msg as ArrayBuffer);
+      console.log(`Client joined room: ${clientRoomID}`);
 
-      // Broadcast to other clients in the same room as ClientMessage (type 0)
-      const clients = rooms.get(roomID);
-      if (clients) {
-        for (const client of clients) {
-          if (client !== ws && client.readyState === WebSocket.OPEN) {
-            sendMessage(client, 0, msgData, 0);
-          }
-        }
+      // Send connection message to this client (for protocol handshake)
+      sendConnectionMsg(ws, userId);
+
+      return;
+    }
+
+    // If client already joined a room, broadcast the client message to others in the same room
+    const clients = rooms.get(clientRoomID);
+    if (!clients) return;
+
+    // The message should be forwarded to all other clients in the room
+    clients.forEach((client) => {
+      if (client !== ws && client.readyState === WebSocket.OPEN) {
+        client.send(message);
       }
     });
+  });
 
-    ws.on("close", () => {
-      console.log("Client disconnected");
-      // Remove from room
-      rooms.get(roomID)?.delete(ws);
-      clientRooms.delete(ws);
+  ws.on("close", () => {
+    console.log("Client disconnected");
 
-      // Notify other clients in room of disconnection (type 2)
-      const clients = rooms.get(roomID);
-      if (clients) {
-        for (const client of clients) {
-          if (client.readyState === WebSocket.OPEN) {
-            sendMessage(client, 0, new Uint8Array(), 2);
-          }
+    if (clientRoomID && rooms.has(clientRoomID)) {
+      rooms.get(clientRoomID)!.delete(ws);
+
+      // Optional: broadcast disconnection message to other clients in room
+      const clients = rooms.get(clientRoomID);
+      clients?.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+          sendDisconnectionMsg(client, userId);
         }
+      });
+
+      if (rooms.get(clientRoomID)!.size === 0) {
+        rooms.delete(clientRoomID);
       }
-    });
+    }
   });
 });
