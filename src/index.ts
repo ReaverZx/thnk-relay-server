@@ -1,57 +1,43 @@
 import http from "http";
 import WebSocket, { WebSocketServer } from "ws";
-import url from "url";
 
+// Port your Render service listens on internally
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 6969;
-const server = http.createServer();
 
+// Map rooms to sets of clients
+const rooms = new Map<string, Set<WebSocket>>();
+
+// Create a simple HTTP server for Render health checks
+const server = http.createServer((req, res) => {
+  if (req.method === "GET" && req.url === "/") {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("OK");
+  } else {
+    res.writeHead(404);
+    res.end();
+  }
+});
+
+// Attach WebSocket server to the HTTP server
 const wss = new WebSocketServer({ server });
 
-const rooms = new Map(); // Map<string, Set<WebSocket>>  key: `${gameID}/${roomID}`
+console.log(`Server listening on port ${PORT}`);
 
-wss.on("connection", (ws, req) => {
-  if (!req.url) {
-    ws.close();
+wss.on("connection", (ws: WebSocket, req) => {
+  console.log("New client connected");
+
+  // Parse URL path to get room info: /gameID/roomID/join
+  const url = req.url || "";
+  const parts = url.split("/").filter(Boolean); // remove empty strings
+  if (parts.length < 3 || parts[2] !== "join") {
+    console.warn("Invalid connection path, closing client");
+    ws.close(1008, "Invalid path");
     return;
   }
 
-  const parsedUrl = url.parse(req.url);
-  const pathParts = parsedUrl.pathname?.split("/") || [];
+  const [gameID, roomID] = parts;
 
-  // Expected path: /gameID/roomID/join
-  if (pathParts.length !== 4 || pathParts[3] !== "join") {
-    ws.close();
-    return;
-  }
-
-  const gameID = pathParts[1];
-  const roomID = pathParts[2];
   const roomKey = `${gameID}/${roomID}`;
 
-  // Add ws client to room set
-  if (!rooms.has(roomKey)) rooms.set(roomKey, new Set());
-  rooms.get(roomKey).add(ws);
-
-  console.log(`New client connected to room ${roomKey}`);
-
-  ws.on("message", (message, isBinary) => {
-    // Broadcast to all other clients in same room
-    for (const client of rooms.get(roomKey)) {
-      if (client !== ws && client.readyState === WebSocket.OPEN) {
-        client.send(message, { binary: isBinary });
-      }
-    }
-  });
-
-  ws.on("close", () => {
-    rooms.get(roomKey).delete(ws);
-    if (rooms.get(roomKey).size === 0) {
-      rooms.delete(roomKey);
-    }
-    console.log(`Client disconnected from room ${roomKey}`);
-  });
-});
-
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`THNK Relay server started on port ${PORT}`);
-});
+  // Add client to the room set
+  if (!rooms.has(roomKey)) rooms.set(roomKey, new
