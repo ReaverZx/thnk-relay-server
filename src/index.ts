@@ -1,51 +1,54 @@
 import http from "http";
 import WebSocket, { WebSocketServer } from "ws";
+import url from "url";
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT) : 8080;
-
-const server = http.createServer((req, res) => {
-  res.writeHead(200, { "Content-Type": "text/plain" });
-  res.end("THNK Relay server is running\n");
-});
+const PORT = process.env.PORT ? parseInt(process.env.PORT) : 6969;
+const server = http.createServer();
 
 const wss = new WebSocketServer({ server });
 
-// Map from client to join packet hex string (room id)
-const clientRooms = new Map<WebSocket, string>();
+const rooms = new Map(); // Map<string, Set<WebSocket>>  key: `${gameID}/${roomID}`
 
-wss.on("connection", (ws: WebSocket) => {
-  console.log("New client connected");
+wss.on("connection", (ws, req) => {
+  if (!req.url) {
+    ws.close();
+    return;
+  }
 
-  ws.once("message", (message: Buffer, isBinary) => {
-    if (!isBinary) {
-      console.warn("First message was not binary, closing");
-      ws.close();
-      return;
+  const parsedUrl = url.parse(req.url);
+  const pathParts = parsedUrl.pathname?.split("/") || [];
+
+  // Expected path: /gameID/roomID/join
+  if (pathParts.length !== 4 || pathParts[3] !== "join") {
+    ws.close();
+    return;
+  }
+
+  const gameID = pathParts[1];
+  const roomID = pathParts[2];
+  const roomKey = `${gameID}/${roomID}`;
+
+  // Add ws client to room set
+  if (!rooms.has(roomKey)) rooms.set(roomKey, new Set());
+  rooms.get(roomKey).add(ws);
+
+  console.log(`New client connected to room ${roomKey}`);
+
+  ws.on("message", (message, isBinary) => {
+    // Broadcast to all other clients in same room
+    for (const client of rooms.get(roomKey)) {
+      if (client !== ws && client.readyState === WebSocket.OPEN) {
+        client.send(message, { binary: isBinary });
+      }
     }
-
-    const roomId = message.toString("hex");
-    clientRooms.set(ws, roomId);
-    console.log(`Client joined room (hex): ${roomId}`);
-
-    ws.on("message", (data, isBin) => {
-      const room = clientRooms.get(ws);
-      if (!room) return;
-
-      wss.clients.forEach((client) => {
-        if (
-          client !== ws &&
-          client.readyState === WebSocket.OPEN &&
-          clientRooms.get(client) === room
-        ) {
-          client.send(data, { binary: isBin });
-        }
-      });
-    });
   });
 
-  ws.once("close", () => {
-    clientRooms.delete(ws);
-    console.log("Client disconnected");
+  ws.on("close", () => {
+    rooms.get(roomKey).delete(ws);
+    if (rooms.get(roomKey).size === 0) {
+      rooms.delete(roomKey);
+    }
+    console.log(`Client disconnected from room ${roomKey}`);
   });
 });
 
