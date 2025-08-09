@@ -1,42 +1,22 @@
 import WebSocket, { WebSocketServer } from "ws";
 
-const PORT = Number(process.env.PORT) || 6969;
-const wss = new WebSocketServer({ port: PORT });
+const port = process.env.PORT ? parseInt(process.env.PORT) : 8080;
+const wss = new WebSocketServer({ port });
 
-const rooms = new Map<string, Set<WebSocket>>();
+console.log(`Relay server started on port ${port}`);
 
-wss.on("connection", (ws) => {
-  let currentRoom: string | null = null;
+wss.on("connection", (ws: WebSocket) => {
+  ws.on("message", (message: WebSocket.RawData) => {
+    const msgStr = message.toString();
+    console.log("Received:", msgStr);
 
-  ws.on("message", (message) => {
-    try {
-      const data = JSON.parse(message.toString());
-      if (data.room) {
-        currentRoom = data.room;
-        if (!rooms.has(currentRoom)) {
-          rooms.set(currentRoom, new Set());
-        }
-        rooms.get(currentRoom)!.add(ws);
-      } else if (currentRoom) {
-        for (const client of rooms.get(currentRoom)!) {
-          if (client !== ws && client.readyState === WebSocket.OPEN) {
-            client.send(message.toString());
-          }
-        }
+    // Broadcast to all other clients
+    wss.clients.forEach((client) => {
+      if (client !== ws && client.readyState === WebSocket.OPEN) {
+        client.send(msgStr);
       }
-    } catch {
-      // Ignore invalid messages
-    }
+    });
   });
 
-  ws.on("close", () => {
-    if (currentRoom && rooms.has(currentRoom)) {
-      rooms.get(currentRoom)!.delete(ws);
-      if (rooms.get(currentRoom)!.size === 0) {
-        rooms.delete(currentRoom);
-      }
-    }
-  });
+  ws.send("Connected to THNK relay server");
 });
-
-console.log(`THNK relay server running on ws://localhost:${PORT}`);
