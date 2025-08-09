@@ -1,11 +1,11 @@
 FROM node:16-slim AS build
 
 WORKDIR /usr/src/app
-COPY package.json tsconfig.json yarn.lock ./
+COPY package.json tsconfig.json ./
 COPY src ./src
 
-RUN npm install #
-RUN npm run build #
+RUN yarn install
+RUN yarn build
 
 FROM gcr.io/distroless/nodejs:16
 COPY --from=build /usr/src/app/dist/index.mjs /usr/src/app/index.mjs
