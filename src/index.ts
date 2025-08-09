@@ -1,10 +1,17 @@
+import http from "http";
 import WebSocket, { WebSocketServer } from "ws";
 
-const port = process.env.PORT ? parseInt(process.env.PORT) : 8080;
-const wss = new WebSocketServer({ port });
+const PORT = process.env.PORT ? parseInt(process.env.PORT) : 8080;
 
-console.log(`Relay server started on port ${port}`);
+// Create HTTP server
+const server = http.createServer();
 
+// Create WebSocket server and attach to HTTP server
+const wss = new WebSocketServer({ server });
+
+console.log(`Relay server starting on port ${PORT}...`);
+
+// WebSocket handling
 wss.on("connection", (ws: WebSocket) => {
   ws.on("message", (message: WebSocket.RawData) => {
     const msgStr = message.toString();
@@ -19,4 +26,9 @@ wss.on("connection", (ws: WebSocket) => {
   });
 
   ws.send("Connected to THNK relay server");
+});
+
+// Start server
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`Relay server started on port ${PORT}`);
 });
