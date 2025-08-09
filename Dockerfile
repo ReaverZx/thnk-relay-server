@@ -4,8 +4,8 @@ WORKDIR /usr/src/app
 COPY package.json tsconfig.json yarn.lock ./
 COPY src ./src
 
-RUN yarn install
-RUN yarn build
+RUN npm install #
+RUN npm run build #
 
 FROM gcr.io/distroless/nodejs:16
 COPY --from=build /usr/src/app/dist/index.mjs /usr/src/app/index.mjs
