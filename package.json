@@ -1,15 +1,15 @@
 {
   "name": "thnk-relay-server",
   "version": "1.0.0",
-  "main": "index.mjs",
+  "type": "module",
   "scripts": {
     "build": "tsc",
-    "build:thnk": "tsc",
-    "start": "node dist/index.mjs",
-    "build:adapters": "yarn build:adapters",
-    "build:extensions": "yarn build:extensions"
+    "start": "node dist/index.js"
   },
   "dependencies": {
-    "thnk": "latest"
+    "ws": "^8.13.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.4"
   }
 }
