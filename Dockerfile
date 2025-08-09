@@ -2,7 +2,6 @@ FROM node:18-slim AS build
 WORKDIR /usr/src/app
 COPY . /usr/src/app
 
-RUN yarn install
 RUN yarn
 RUN yarn build
 
