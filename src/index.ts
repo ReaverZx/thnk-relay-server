@@ -10,43 +10,23 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 
+// Map from client to join packet hex string (room id)
 const clientRooms = new Map<WebSocket, string>();
 
 wss.on("connection", (ws: WebSocket) => {
   console.log("New client connected");
 
   ws.once("message", (message: Buffer, isBinary) => {
-    console.log("Raw join packet bytes:", [...message]);
-
     if (!isBinary) {
-      console.warn("First message was not binary, ignoring client");
+      console.warn("First message was not binary, closing");
       ws.close();
       return;
     }
 
-    // Try parsing with length byte — if this fails, fallback
-    try {
-      if (message.length < 2) {
-        throw new Error("Join packet too short");
-      }
-      const type = message.readUInt8(0);
-      const roomIdLength = message.readUInt8(1);
+    const roomId = message.toString("hex");
+    clientRooms.set(ws, roomId);
+    console.log(`Client joined room (hex): ${roomId}`);
 
-      if (message.length < 2 + roomIdLength) {
-        throw new Error("Join packet room ID length mismatch");
-      }
-
-      const roomId = message.subarray(2, 2 + roomIdLength).toString("utf8");
-      clientRooms.set(ws, roomId);
-      console.log(`Client joined room: ${roomId}`);
-    } catch (e) {
-      console.warn(`${e}. Using fallback room parsing...`);
-      const roomId = message.subarray(1).toString("utf8").replace(/\0/g, "");
-      clientRooms.set(ws, roomId);
-      console.log(`Client joined room (fallback parse): ${roomId}`);
-    }
-
-    // Forward all future messages to clients in the same room
     ws.on("message", (data, isBin) => {
       const room = clientRooms.get(ws);
       if (!room) return;
