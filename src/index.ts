@@ -1,6 +1,6 @@
 import WebSocket, { WebSocketServer } from "ws";
 
-const port = process.env.PORT ? parseInt(process.env.PORT) : 6969;
+const port = process.env.PORT ? parseInt(process.env.PORT) : 10000;
 const wss = new WebSocketServer({ port });
 
 console.log(`Relay server started on port ${port}`);
