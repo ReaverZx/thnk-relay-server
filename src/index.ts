@@ -10,35 +10,36 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 
-// Map of client → roomId
 const clientRooms = new Map<WebSocket, string>();
 
 wss.on("connection", (ws: WebSocket) => {
   console.log("New client connected");
 
-  ws.on("message", (message, isBinary) => {
-    if (!isBinary) return; // THNK uses binary, ignore text
-
-    // First message from client is the room ID
-    if (!clientRooms.has(ws)) {
-      const roomId = message.toString("utf8"); // THNK sends room as utf8 text first
-      clientRooms.set(ws, roomId);
-      console.log(`Client joined room: ${roomId}`);
+  ws.once("message", (message: Buffer, isBinary) => {
+    if (!isBinary) {
+      console.warn("First message was not binary, ignoring");
       return;
     }
 
-    const roomId = clientRooms.get(ws);
-    if (!roomId) return;
+    // Skip the first byte (message type), read the rest as UTF-8
+    const roomId = message.subarray(1).toString("utf8").replace(/\0/g, "");
+    clientRooms.set(ws, roomId);
+    console.log(`Client joined room: ${roomId}`);
 
-    // Broadcast only to same room
-    wss.clients.forEach((client) => {
-      if (
-        client !== ws &&
-        client.readyState === WebSocket.OPEN &&
-        clientRooms.get(client) === roomId
-      ) {
-        client.send(message, { binary: true });
-      }
+    // Now forward all future messages only to same-room clients
+    ws.on("message", (data, isBin) => {
+      const room = clientRooms.get(ws);
+      if (!room) return;
+
+      wss.clients.forEach((client) => {
+        if (
+          client !== ws &&
+          client.readyState === WebSocket.OPEN &&
+          clientRooms.get(client) === room
+        ) {
+          client.send(data, { binary: isBin });
+        }
+      });
     });
   });
 
