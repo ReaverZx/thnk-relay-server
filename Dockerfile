@@ -1,14 +1,16 @@
-# Build stage
 FROM node:16-slim AS build
+
 WORKDIR /usr/src/app
-COPY . /usr/src/app
-RUN yarn
+COPY package.json tsconfig.json yarn.lock ./
+COPY src ./src
+
+RUN yarn install
 RUN yarn build
 
-# Runtime stage
 FROM gcr.io/distroless/nodejs:16
-COPY --from=build /usr/src/app/dist/index.js /usr/src/app/index.mjs
+COPY --from=build /usr/src/app/dist/index.mjs /usr/src/app/index.mjs
 COPY --from=build /usr/src/app/node_modules /usr/src/app/node_modules
+
 WORKDIR /usr/src/app
 CMD ["index.mjs"]
 EXPOSE 6969
