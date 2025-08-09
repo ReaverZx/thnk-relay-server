@@ -1,65 +1,77 @@
-import http from "http";
 import WebSocket, { WebSocketServer } from "ws";
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT) : 6969;
+const port = process.env.PORT ? parseInt(process.env.PORT) : 6969;
+const wss = new WebSocketServer({ port });
 
+console.log(`Relay server started on port ${port}`);
+
+// Map roomID -> Set of clients
 const rooms = new Map<string, Set<WebSocket>>();
+// Map client -> roomID
+const clientRooms = new Map<WebSocket, string>();
 
-const server = http.createServer((req, res) => {
-  if (req.method === "GET" && req.url === "/") {
-    res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end("OK");
-  } else {
-    res.writeHead(404);
-    res.end();
-  }
-});
+// Helper to send typed messages:
+// messageType: 0=ClientMessage, 1=Connection, 2=Disconnection
+function sendMessage(ws: WebSocket, userID: number, data: Uint8Array, messageType: number) {
+  // Create new buffer with data + userID + messageType bytes
+  const buffer = new Uint8Array(data.length + 2);
+  buffer.set(data, 0);
+  buffer[data.length] = userID;
+  buffer[data.length + 1] = messageType;
+  ws.send(buffer);
+}
 
-const wss = new WebSocketServer({ server });
-
-console.log(`Server listening on port ${PORT}`);
-
-wss.on("connection", (ws: WebSocket, req) => {
+wss.on("connection", (ws) => {
   console.log("New client connected");
 
-  const url = req.url || "";
-  const parts = url.split("/").filter(Boolean);
-  if (parts.length < 3 || parts[2] !== "join") {
-    console.warn("Invalid connection path, closing client");
-    ws.close(1008, "Invalid path");
-    return;
-  }
+  // Wait for client to send join room message
+  ws.once("message", (message) => {
+    const data = new Uint8Array(message as ArrayBuffer);
 
-  const [gameID, roomID] = parts;
+    // The client sends the room ID as a string at the start, but it's binary, so convert bytes to string
+    const roomID = new TextDecoder().decode(data);
+    console.log(`Client joined room: ${roomID}`);
 
-  const roomKey = `${gameID}/${roomID}`;
+    // Store client in room map
+    if (!rooms.has(roomID)) {
+      rooms.set(roomID, new Set());
+    }
+    rooms.get(roomID)?.add(ws);
+    clientRooms.set(ws, roomID);
 
-  if (!rooms.has(roomKey)) rooms.set(roomKey, new Set());
-  rooms.get(roomKey)?.add(ws);
+    // Send connection message to client (userID = 0 for server)
+    sendMessage(ws, 0, new Uint8Array(), 1);
 
-  console.log(`Client joined room: ${roomKey}`);
+    // Setup normal message forwarding for this client
+    ws.on("message", (msg) => {
+      const msgData = new Uint8Array(msg as ArrayBuffer);
 
-  ws.on("message", (message) => {
-    const roomClients = rooms.get(roomKey);
-    if (!roomClients) return;
+      // Broadcast to other clients in the same room as ClientMessage (type 0)
+      const clients = rooms.get(roomID);
+      if (clients) {
+        for (const client of clients) {
+          if (client !== ws && client.readyState === WebSocket.OPEN) {
+            sendMessage(client, 0, msgData, 0);
+          }
+        }
+      }
+    });
 
-    roomClients.forEach((client) => {
-      if (client !== ws && client.readyState === WebSocket.OPEN) {
-        client.send(message);
+    ws.on("close", () => {
+      console.log("Client disconnected");
+      // Remove from room
+      rooms.get(roomID)?.delete(ws);
+      clientRooms.delete(ws);
+
+      // Notify other clients in room of disconnection (type 2)
+      const clients = rooms.get(roomID);
+      if (clients) {
+        for (const client of clients) {
+          if (client.readyState === WebSocket.OPEN) {
+            sendMessage(client, 0, new Uint8Array(), 2);
+          }
+        }
       }
     });
   });
-
-  ws.on("close", () => {
-    console.log("Client disconnected");
-    rooms.get(roomKey)?.delete(ws);
-    if (rooms.get(roomKey)?.size === 0) {
-      rooms.delete(roomKey);
-      console.log(`Room ${roomKey} deleted (empty)`);
-    }
-  });
-
-  ws.send("Connected to THNK relay server");
 });
-
-server.listen(PORT);
